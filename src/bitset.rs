@@ -1,4 +1,5 @@
 use std::num::Wrapping;
+use std::usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bitset(Wrapping<u32>);
@@ -15,6 +16,10 @@ impl Index32 {
 
     pub fn convert(index: usize, depth: usize) -> Self {
         Index32((index >> (depth * 5)) & 0b11111)
+    }
+
+    pub fn max_with(depth: usize) -> Self {
+        Index32::convert(usize::MAX, depth)
     }
 
     pub fn num(&self) -> usize {

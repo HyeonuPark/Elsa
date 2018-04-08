@@ -10,12 +10,17 @@ use bitset::{Bitset, Index32};
 
 const MAX_DEPTH: usize = (size_of::<usize>() - 1) / 5 + 1;
 
+/// Array-Mapped Trie
+///
+/// Array-mapped trie is a efficient implementation of sparse array
+/// which uses entire `usize` range as its index space.
 #[derive(Debug)]
 pub struct Trie<T> {
     root: Option<Node<T>>,
     length: usize,
 }
 
+/// Variant for temporal mutation
 #[derive(Debug)]
 pub struct TrieMut<T> {
     root: NodeMut<T>,
@@ -73,22 +78,22 @@ impl<T: Clone> Trie<T> {
         match iter.next() {
             None => self.clone(),
             Some((index, value)) => {
-                let mut trie = self.to_mut();
-                trie.insert(index, value);
+                let mut trie_mut = self.to_mut();
+                trie_mut.insert(index, value);
 
                 for (index, value) in iter {
-                    trie.insert(index, value);
+                    trie_mut.insert(index, value);
                 }
 
-                trie.into_trie()
+                trie_mut.into_trie()
             }
         }
     }
 
     pub fn update(&self, index: usize, value: T) -> Self {
-        let mut trie = self.to_mut();
-        trie.insert(index, value);
-        trie.into_trie()
+        let mut trie_mut = self.to_mut();
+        trie_mut.insert(index, value);
+        trie_mut.into_trie()
     }
 
     pub fn remove_all<I: IntoIterator<Item=usize>>(&self, iter: I) -> Self {
@@ -97,22 +102,30 @@ impl<T: Clone> Trie<T> {
         match iter.next() {
             None => self.clone(),
             Some(index) => {
-                let mut trie = self.to_mut();
-                trie.remove(index);
+                let mut trie_mut = self.to_mut();
+                trie_mut.remove(index);
 
                 for index in iter {
-                    trie.remove(index);
+                    trie_mut.remove(index);
                 }
 
-                trie.into_trie()
+                trie_mut.into_trie()
             }
         }
     }
 
     pub fn remove(&self, index: usize) -> Self {
-        let mut trie = self.to_mut();
-        trie.remove(index);
-        trie.into_trie()
+        let mut trie_mut = self.to_mut();
+        trie_mut.remove(index);
+        trie_mut.into_trie()
+    }
+
+    pub fn next_empty(&self, start: usize) -> Option<usize> {
+        self.root.as_ref()
+            .map_or(Some(start), |node| {
+                node.next_empty(0, start)
+                    .or_else(|| node.next_empty(0, 0))
+            })
     }
 }
 
@@ -131,6 +144,14 @@ impl<T: Clone> Clone for Trie<T> {
     }
 }
 
+impl<T: Clone> Extend<(usize, T)> for Trie<T> {
+    fn extend<I: IntoIterator<Item=(usize, T)>>(&mut self, iter: I) {
+        let mut trie_mut = self.to_mut();
+        trie_mut.extend(iter);
+        *self = trie_mut.into_trie();
+    }
+}
+
 impl<T: Clone> FromIterator<(usize, T)> for Trie<T> {
     fn from_iter<I: IntoIterator<Item=(usize, T)>>(iter: I) -> Self {
         let trie: TrieMut<T> = iter.into_iter().collect();
@@ -139,10 +160,8 @@ impl<T: Clone> FromIterator<(usize, T)> for Trie<T> {
 }
 
 impl<T: Clone> TrieMut<T> {
-    pub fn new() -> Self {
-        TrieMut {
-            root: Empty,
-        }
+    pub fn len(&self) -> usize {
+        self.root.len()
     }
 
     pub fn insert(&mut self, index: usize, value: T) -> Option<T> {
@@ -164,12 +183,6 @@ impl<T: Clone> TrieMut<T> {
     }
 }
 
-impl<T: Clone> Default for TrieMut<T> {
-    fn default() -> Self {
-        TrieMut::new()
-    }
-}
-
 impl<T: Clone> Extend<(usize, T)> for TrieMut<T> {
     fn extend<I: IntoIterator<Item=(usize, T)>>(&mut self, iter: I) {
         for (index, value) in iter {
@@ -180,9 +193,9 @@ impl<T: Clone> Extend<(usize, T)> for TrieMut<T> {
 
 impl<T: Clone> FromIterator<(usize, T)> for TrieMut<T> {
     fn from_iter<I: IntoIterator<Item=(usize, T)>>(iter: I) -> Self {
-        let mut trie = Self::default();
-        trie.extend(iter);
-        trie
+        let mut trie_mut = Trie::default().to_mut();
+        trie_mut.extend(iter);
+        trie_mut
     }
 }
 
@@ -205,6 +218,46 @@ impl<T: Clone> Node<T> {
             }
         }
     }
+
+    fn next_empty(&self, depth: usize, start: usize) -> Option<usize> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+
+        let transform = |idx| Index32::convert(idx, depth);
+
+        match *self {
+            One { index, .. } =>  {
+                if index != start {
+                    Some(start)
+                } else if transform(start) == Index32::max_with(depth) {
+                    None
+                } else {
+                    Some(start + 1)
+                }
+            }
+            More { bitset, ref nodes } => {
+                if !bitset.get(transform(start)) {
+                    Some(start)
+                } else {
+                    let start_iter = (start..)
+                        .take_while(|&idx| transform(idx) < Index32::max_with(depth));
+
+                    for start in start_iter {
+                        match bitset.packed_index(transform(start)) {
+                            None => return Some(start),
+                            Some(idx) => match nodes[idx].next_empty(depth + 1, start) {
+                                Some(res) => return Some(res),
+                                None => {}
+                            }
+                        }
+                    }
+
+                    None
+                }
+            }
+        }
+    }
 }
 
 impl<T: Clone> Clone for Node<T> {
@@ -224,6 +277,14 @@ fn make_mut<T: Clone>(bitset: Bitset, nodes: &[Node<T>]) -> Vec<(Index32, NodeMu
 }
 
 impl<T: Clone> NodeMut<T> {
+    fn len(&self) -> usize {
+        match *self {
+            Empty => 0,
+            Imut(ref node) => node.len(),
+            MoreMut(ref nodes) => nodes.iter().map(|&(_, ref node)| node.len()).sum(),
+        }
+    }
+
     fn insert(&mut self, depth: usize, new_index: usize, new_value: T) -> Option<T> {
         if depth > MAX_DEPTH {
             return None;
@@ -352,9 +413,8 @@ impl<T: Clone> NodeMut<T> {
                 let mut nodes = Vec::new();
 
                 for (idx32, node_mut) in pairs {
-                    bitset.set(idx32);
-
                     if let Some(node) = node_mut.into_node() {
+                        bitset.set(idx32);
                         nodes.push(node);
                     }
                 }
