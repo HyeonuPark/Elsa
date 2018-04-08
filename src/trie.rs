@@ -13,6 +13,7 @@ const MAX_DEPTH: usize = (size_of::<usize>() - 1) / 5 + 1;
 #[derive(Debug)]
 pub struct Trie<T> {
     root: Option<Node<T>>,
+    length: usize,
 }
 
 #[derive(Debug)]
@@ -45,11 +46,12 @@ impl<T: Clone> Trie<T> {
     pub fn new() -> Self {
         Trie {
             root: None,
+            length: 0,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.root.as_ref().map_or(0, |node| node.len())
+        self.length
     }
 
     pub fn get(&self, index: usize) -> Option<T> {
@@ -124,6 +126,7 @@ impl<T: Clone> Clone for Trie<T> {
     fn clone(&self) -> Self {
         Trie {
             root: self.root.clone(),
+            length: self.length,
         }
     }
 }
@@ -151,8 +154,12 @@ impl<T: Clone> TrieMut<T> {
     }
 
     pub fn into_trie(self) -> Trie<T> {
+        let root = self.root.into_node();
+        let length = root.as_ref().map_or(0, |node| node.len());
+
         Trie {
-            root: self.root.into_node(),
+            root,
+            length,
         }
     }
 }
